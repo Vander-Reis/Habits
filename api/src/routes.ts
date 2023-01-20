@@ -76,5 +76,84 @@ export async function appRoutes(app: FastifyInstance) {
       completedHabits
     }
   })
+
+  // completar / não-completar um hábito
+  app.patch("/habits/:id/toogle", async (request) => {
+    const toogleHabitParams = z.object({
+      id: z.string().uuid(),
+    })
+
+    const { id } = toogleHabitParams.parse(request.params)
+
+    const today = dayjs().startOf('day').toDate()
+
+    let day = await prisma.day.findUnique({
+      where: {
+        date: today,
+      }
+    })
+    if (!day) {
+      day = await prisma.day.create({
+        data: {
+          date: today,
+        }
+      })
+    }
+
+    const dayHabit = await prisma.dayHabit.findUnique({
+      where: {
+        day_id_habit_id:  {
+          day_id: day.id,
+          habit_id: id
+        }
+      }
+    })
+
+    if (dayHabit) {
+      //remover a marcação de completo
+      await prisma.dayHabit.delete({
+        where: {
+          id: dayHabit.id
+        }
+      })
+    } else {
+      await prisma.dayHabit.create({
+        data: {
+          day_id: day.id,
+          habit_id: id,
+        }
+      })
+    }
+  })
+
+  app.get("/summary", async () => {
+    // [ { date: 17/01, amount: 5, completed: 1 }, {}, {}, {}]
+    // Query mais complexa, mais condições, relacionamentos => SQL na mão (RAW)
+    const summary = await prisma.$queryRaw`
+      SELECT 
+        D.id, 
+        D.date,
+        (
+          SELECT 
+            cast(count(*) as float)
+          FROM day_habits DH
+          WHERE DH.day_id = D.id
+        ) as completed, -- Total de hábitos completados neste dia
+        (
+            SELECT
+              cast(count(*) as float)
+            FROM habit_week_days HWD
+            JOIN habits H
+              ON H.id = HWD.habit_id
+            WHERE 
+              HWD.week_day = cast(strftime('%w', D.date/1000.0, 'unixepoch') as int)
+              AND H.created_at <= D.date
+        ) as amount -- Total de hábitos disponivel nesta data
+      FROM days D
+    `
+    return summary;
+  })
+
+
 }
 
